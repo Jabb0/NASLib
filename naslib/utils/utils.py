@@ -106,17 +106,16 @@ def pairwise(iterable):
     return zip(a, a)
 
 
-def get_config_from_args(args=None, config_type='nas'):
+def _read_default_config(config_type: str):
     """
-    Parses command line arguments and merges them with the defaults
-    from the config file.
-
-    Prepares experiment directories.
+    Read the default config file for the given config type.
+    Prefixed with _ as this config is not finalized.
 
     Args:
-        args: args from a different argument parser than the default one.
+        config_type: name of the config type
+    Return:
+        config: loaded configuration object
     """
-
     if config_type == 'nas':
         # load the default base
         with open(os.path.join(get_project_root(), 'defaults', 'darts_defaults.yaml')) as f:
@@ -134,7 +133,64 @@ def get_config_from_args(args=None, config_type='nas'):
         with open(os.path.join(get_project_root(), 'benchmarks/nas_predictors', 'nas_predictor_config.yaml')) as f:
             config = CfgNode.load_cfg(f)
 
+    return config
 
+
+def _finalize_config(config, config_type):
+    """
+    Finalize a configuration file by adding config_type specific arguments and save paths
+
+    Args:
+        config: the config object to modify
+        config_type: str identifier of the config type
+    """
+    # prepare the output directories
+    if config_type == 'nas':
+        config.search.seed = config.seed
+        config.save = '{}/{}/{}/{}'.format(config.out_dir, config.dataset, config.optimizer, config.seed)
+    elif config_type == 'predictor':
+        if config.predictor == 'lcsvr' and config.experiment_type == 'vary_train_size':
+            config.save = '{}/{}/{}/{}_train/{}'.format(config.out_dir, config.dataset, 'predictors', config.predictor,
+                                                        config.seed)
+        elif config.predictor == 'lcsvr' and config.experiment_type == 'vary_fidelity':
+            config.save = '{}/{}/{}/{}_fidelity/{}'.format(config.out_dir, config.dataset, 'predictors',
+                                                           config.predictor, config.seed)
+        else:
+            config.save = '{}/{}/{}/{}/{}'.format(config.out_dir, config.dataset, 'predictors', config.predictor,
+                                                  config.seed)
+    elif config_type == 'nas_predictor':
+        config.search.seed = config.seed
+        config.save = '{}/{}/{}/{}/{}/{}'.format(config.out_dir, config.dataset, 'nas_predictors',
+                                                 config.search_space,
+                                                 config.search.predictor_type,
+                                                 config.seed)
+    elif config_type == 'oneshot':
+        config.save = '{}/{}/{}/{}/{}/{}'.format(config.out_dir, config.dataset, 'nas_predictors',
+                                                 config.search_space,
+                                                 config.search.predictor_type,
+                                                 config.seed)
+    else:
+        print('invalid config type in utils/utils.py')
+
+    config.data = "{}/data".format(get_project_root())
+
+    return config
+
+
+def get_config_from_args(args=None, config_type='nas', merge_file=None):
+    """
+    Parses command line arguments and merges them with the defaults
+    from the config file.
+
+    Prepares experiment directories.
+
+    Args:
+        args: args from a different argument parser than the default one.
+    """
+    # Read the default config
+    config = _read_default_config(config_type)
+
+    # Parse the command line arguments
     if args is None:
         args = parse_args()
     print(args)
@@ -148,6 +204,11 @@ def get_config_from_args(args=None, config_type='nas'):
              #config[k] = AttrDict(v)
 
     # Override file args with ones from command line
+
+    # TODO: This try catch does not look like it works properly. What is the purpose?
+    #   The except block is reached if there is an error parsing an argument but it assumes that args[1]
+    #   is the path to a config file. Also later if config_type is nas other properties of args are used.
+    #   This will fail if one passed in a list instead of a config namespace.
     try:
         for arg, value in pairwise(args.opts):
             if '.' in arg:
@@ -171,47 +232,33 @@ def get_config_from_args(args=None, config_type='nas'):
         with open(args[1]) as f:
             config = CfgNode.load_cfg(f)
 
-
-    # prepare the output directories
-    if config_type == 'nas':
-        #config.seed = args.seed
-        config.search.seed = config.seed
-        #config.optimizer = args.optimizer
+    # Add more config for them args specific to a config_type
+    if config_type == "nas":
+        # config.seed = args.seed
+        # config.optimizer = args.optimizer
         config.evaluation.world_size = args.world_size
         config.gpu = config.search.gpu = config.evaluation.gpu = args.gpu
         config.evaluation.rank = args.rank
         config.evaluation.dist_url = args.dist_url
         config.evaluation.dist_backend = args.dist_backend
         config.evaluation.multiprocessing_distributed = args.multiprocessing_distributed
-        config.save = '{}/{}/{}/{}'.format(config.out_dir, config.dataset, config.optimizer, config.seed)
-    elif config_type == 'predictor':
-        if config.predictor == 'lcsvr' and config.experiment_type == 'vary_train_size':
-            config.save = '{}/{}/{}/{}_train/{}'.format(config.out_dir, config.dataset, 'predictors', config.predictor, config.seed)
-        elif config.predictor == 'lcsvr' and config.experiment_type == 'vary_fidelity':
-            config.save = '{}/{}/{}/{}_fidelity/{}'.format(config.out_dir, config.dataset, 'predictors', config.predictor, config.seed)
-        else:
-            config.save = '{}/{}/{}/{}/{}'.format(config.out_dir, config.dataset, 'predictors', config.predictor, config.seed)
-    elif config_type == 'nas_predictor':
-        config.search.seed = config.seed
-        config.save = '{}/{}/{}/{}/{}/{}'.format(config.out_dir, config.dataset, 'nas_predictors',
-                                                 config.search_space,
-                                                 config.search.predictor_type,
-                                                 config.seed)
-    elif config_type == 'oneshot':
-        config.save = '{}/{}/{}/{}/{}/{}'.format(config.out_dir, config.dataset, 'nas_predictors',
-                                                 config.search_space,
-                                                 config.search.predictor_type,
-                                                 config.seed)
-    else:
-        print('invalid config type in utils/utils.py')
 
-    config.data = "{}/data".format(get_project_root())
+    # This is just ugly. This config parsing has to be more modular
+    if merge_file is not None:
+        config.merge_from_file(merge_file)
 
-    create_exp_dir(config.save)
-    create_exp_dir(config.save + "/search")     # required for the checkpoints
-    create_exp_dir(config.save + "/eval")
+    config = _finalize_config(config, config_type)
+
+    # Should ideally not be done in the config parsing
+    create_exp_dirs(config.save)
 
     return config
+
+
+def create_exp_dirs(save_path):
+    create_exp_dir(save_path)
+    create_exp_dir(os.path.join(save_path, "search"))  # required for the checkpoints
+    create_exp_dir(os.path.join(save_path, "eval"))
 
 
 def get_train_val_loaders(config, mode):

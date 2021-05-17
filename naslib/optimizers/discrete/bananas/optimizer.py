@@ -52,9 +52,16 @@ class Bananas(MetaOptimizer):
         self.zc = ('omni' in self.predictor_type)
         self.semi = ('semi' in self.predictor_type)
 
+        # Set later in adapt_search_space()
+        self.search_space = None
+        self.scope = None
+        self.dataset_api = None
+        self.ss_type = None
+        self.unlabeled = []
+        self.train_loader = None
+
     def adapt_search_space(self, search_space, scope=None, dataset_api=None):
         assert search_space.QUERYABLE, "Bananas is currently only implemented for benchmarks."
-        
         self.search_space = search_space.clone()
         self.scope = scope if scope else search_space.OPTIMIZER_SCOPE      
         self.dataset_api = dataset_api
@@ -153,7 +160,7 @@ class Bananas(MetaOptimizer):
                             candidates.append(candidate)
 
                 else:
-                    logger.info('{} is not yet supported as a acq fn optimizer'.format(encoding_type))
+                    logger.info('{} is not yet supported as a acq fn optimizer'.format(self.acq_fn_optimization))
                     raise NotImplementedError()
 
                 if self.zc and len(self.train_data) <= self.max_zerocost:
